@@ -1,138 +1,117 @@
 package es.uniovi.eii.ds.main;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.UncheckedIOException;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+import es.uniovi.eii.ds.commands.DeleteCommand;
+import es.uniovi.eii.ds.commands.InsertCommand;
+import es.uniovi.eii.ds.commands.MacroCommand;
+import es.uniovi.eii.ds.commands.ReplaceCommand;
+import es.uniovi.eii.ds.editor.Editor;
+import es.uniovi.eii.ds.macro.Macro;
 
 public class Main {
 
     BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
-	
-	// Represents the document of the editor.
-	StringBuilder text = new StringBuilder();
+
+    Editor editor = new Editor();
+    // Esto mejor que lo haga todo el editor
+    private final Map<String, Macro> recordedMacros = new HashMap<>();
+    private Macro currentRecording = null;
 
     public static void main(String[] args) {
         new Main().run();
     }
-	
-	// Main program loop.
+
+    // Main program loop.
     public void run() {
-		drawLogo();
-		showHelp();
+        editor.drawLogo();
+        editor.showHelp();
 
-		while (true) {
-			UserCommand command = promptUser();
-			String[] args = command.args;
+        while (true) {
+            UserCommand command = promptUser();
+            String[] args = command.args;
 
-			switch (command.name) {
-				case "open" -> open(args);
-				case "insert" -> { 
-					for (String word : args) {
-						text.append(" ").append(word);
-					}
-				}
-				case "delete" -> {
-					int indexOfLastWord = text.toString().trim().lastIndexOf(" ");
-					if (indexOfLastWord == -1)
-						text = new StringBuilder("");
-					else
-						text.setLength(indexOfLastWord);
-				}
-				case "replace" -> replace(args);
-				case "help" -> showHelp();
-				case "record" -> {
-					// String macroName = args[0];
-					// ...
-				}
-				case "stop" -> { 
-					// ...
-				}
-				case "execute" -> {
-					// String macroName = args[0];
-					// ...
-				}
-				default -> {
-					System.out.println("Unknown command");
-					continue;
-				}
-			}
+            MacroCommand commandToExecute = null;
+            switch (command.name) {
+            case "open" -> open(args);
+            case "insert" -> {
+                commandToExecute = new InsertCommand(editor, args);
+            }
+            case "delete" -> {
+                commandToExecute = new DeleteCommand(editor);
+            }
+            case "replace" -> {
+                if (!checkArguments(args, 2, "replace <find> <replace>"))
+                    break;
+                commandToExecute = new ReplaceCommand(editor, args[0], args[1]);
+            }
+            case "help" -> editor.showHelp();
+            case "record" -> {
+                if (!checkArguments(args, 1, "record <macroName>"))
+                    break;
+                String macroName = args[0];
 
-			System.out.println(text);
-		}
-	}
+                currentRecording = new Macro(macroName);
+            }
+            case "stop" -> {
+                if (currentRecording != null) {
+                    recordedMacros.put(currentRecording.getName(),
+                            currentRecording);
+                    currentRecording = null;
+                }
+            }
+            case "execute" -> {
+                if (!checkArguments(args, 1, "execute <macroName>")) {
+                    break;
+                }
+                String macroName = args[0];
+                MacroCommand toExecute = recordedMacros.get(macroName);
 
-	//$-- Some individual user commands that do a bit more work ---------------
+                if (toExecute != null) {
 
-	private void open(String[] args) {
-		if (!checkArguments(args, 1, "open <file>"))
-			return;
-		try {
-			String filename = args[0];
-			text = new StringBuilder(readFile(filename));
-		} catch (Exception e) {
-			System.out.println("Document could not be opened");
-		}
-	}
+                    commandToExecute = toExecute;
+                } else {
+                    System.out.println("Macro '" + macroName + "' not found.");
+                }
+            }
+            default -> {
+                System.out.println("Unknown command");
+                continue;
+            }
+            }
 
-	private String readFile(String filename) {
-		InputStream in = getClass().getResourceAsStream("/" + filename);
-		if (in == null)
-			throw new IllegalArgumentException("File not found: " + filename);
+            if (commandToExecute != null) {
+                commandToExecute.execute();
 
-		try (BufferedReader input = new BufferedReader(new InputStreamReader(in))) {
-			StringBuilder result = new StringBuilder();
-			String line;
-			boolean firstLine = true;
-			while ((line = input.readLine()) != null) {
-				if (!firstLine)
-					result.append(System.lineSeparator());
-				result.append(line);
-				firstLine = false;
-			}
-			return result.toString();
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
-		}
-	}
+                if (currentRecording != null) {
+                    currentRecording.addInstruction(commandToExecute);
+                } else {
+                    System.out.println(editor.getText().trim());
+                }
+            }
 
-	private void replace(String[] args) {
-		if (!checkArguments(args, 2, "replace <find> <replace>"))
-			return;
-		String find = args[0];
-		String replace = args[1];
-		text = new StringBuilder(text.toString().replace(find, replace));
-	}
+        }
+    }
 
-	//$-- Auxiliary methods ---------------------------------------------------
+    // $-- Some individual user commands that do a bit more work ---------------
 
-	// YOU DON'T NEED TO UNDERSTAND OR MODIFY THE CODE BELOW THIS LINE
-
-	private record UserCommand(String name, String[] args) {}
-
-    // Prompts the user and reads a line of input and returns it as a record with
-	// the command and its arguments. If EOF is reached (i.e., there are nothing to
-	// read), an error occurs or the user types "exit", the program exits. If there
-	// are no arguments, the args array is empty.
-	//
-	// Example:
-	//
-	//   > insert "no quiero acordarme" --> returns UserInput("insert", ["no", "quiero", "acordarme"])
-	//	 > delete                       --> returns UserInput("delete", [])
-	//
-	private UserCommand promptUser() {
-		while (true) {
-            System.out.print("> ");
-            try {
-                String line = in.readLine();
-				if (line == null) System.exit(0);
-				if (line.equals("exit")) exit();
-				if (line.isBlank()) continue;
-				String[] parts = line.split("\\s+");
-				return new UserCommand(parts[0], Arrays.copyOfRange(parts, 1, parts.length));
-            } catch (IOException e) {
-                System.out.println("Error reading input");
-				System.exit(2);
-			}
-		}
+    private void open(String[] args) {
+        if (!checkArguments(args, 1, "open <file>"))
+            return;
+        try {
+            String filename = args[0];
+            editor.setText(new StringBuilder(readFile(filename)).toString());
+            System.out.println(editor.getText().trim());
+        } catch (Exception e) {
+            System.out.println("Document could not be opened");
+        }
     }
 
     private boolean checkArguments(String[] args, int expected, String syntax) {
@@ -143,42 +122,72 @@ public class Main {
         return true;
     }
 
-	private void exit() {
-		System.out.println("Goodbye!");
-		System.exit(0);
-	}	
+    private String readFile(String filename) {
+        InputStream in = getClass().getResourceAsStream("/" + filename);
+        if (in == null)
+            throw new IllegalArgumentException("File not found: " + filename);
 
-	private void drawLogo() {
-		System.out.println(LOGO);
-	}
+        try (BufferedReader input = new BufferedReader(
+                new InputStreamReader(in))) {
+            StringBuilder result = new StringBuilder();
+            String line;
+            boolean firstLine = true;
+            while (( line = input.readLine() ) != null) {
+                if (!firstLine)
+                    result.append(System.lineSeparator());
+                result.append(line);
+                firstLine = false;
+            }
+            return result.toString();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 
-	private void showHelp() {
-		System.out.println(HELP);
-	}
+    // $-- Auxiliary methods ---------------------------------------------------
 
-	private static final String LOGO = """
+    // YOU DON'T NEED TO UNDERSTAND OR MODIFY THE CODE BELOW THIS LINE
 
-			███╗   ███╗ █████╗  ██████╗████████╗███████╗██╗  ██╗
-			████╗ ████║██╔══██╗██╔════╝╚══██╔══╝██╔════╝╚██╗██╔╝
-			██╔████╔██║███████║██║        ██║   █████╗   ╚███╔╝ 
-			██║╚██╔╝██║██╔══██║██║        ██║   ██╔══╝   ██╔██╗ 
-			██║ ╚═╝ ██║██║  ██║╚██████╗   ██║   ███████╗██╔╝ ██╗
-			╚═╝     ╚═╝╚═╝  ╚═╝ ╚═════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
-			""";
+    private record UserCommand(String name, String[] args) {
+    }
 
-	private static final String HELP = """
-			┌──────────────────────┬─────────────────────────────────────────────┐
-			│ open <file>          │                                             │
-			│ insert <text>        │ append text to the end                      │
-			│ delete               │ delete the last word                        │
-			│ replace <a> <b>      │ replace <a> with <b> in the whole document  │
-			├──────────────────────┼─────────────────────────────────────────────┤
-			│ record <macro>       │ start recording a macro                     │
-			│ stop                 │ stop recording                              │
-			│ execute <macro>      │ execute the specified macro                 │
-			├──────────────────────┼─────────────────────────────────────────────┤
-			│ help                 │                                             │
-			│ exit                 │                                             │
-			└──────────────────────┴─────────────────────────────────────────────┘
-			""";
+    // Prompts the user and reads a line of input and returns it as a record
+    // with
+    // the command and its arguments. If EOF is reached (i.e., there are nothing
+    // to
+    // read), an error occurs or the user types "exit", the program exits. If
+    // there
+    // are no arguments, the args array is empty.
+    //
+    // Example:
+    //
+    // > insert "no quiero acordarme" --> returns UserInput("insert", ["no",
+    // "quiero", "acordarme"])
+    // > delete --> returns UserInput("delete", [])
+    //
+    private UserCommand promptUser() {
+        while (true) {
+            System.out.print("> ");
+            try {
+                String line = in.readLine();
+                if (line == null)
+                    System.exit(0);
+                if (line.equals("exit"))
+                    exit();
+                if (line.isBlank())
+                    continue;
+                String[] parts = line.split("\\s+");
+                return new UserCommand(parts[0],
+                        Arrays.copyOfRange(parts, 1, parts.length));
+            } catch (IOException e) {
+                System.out.println("Error reading input");
+                System.exit(2);
+            }
+        }
+    }
+
+    private void exit() {
+        System.out.println("Goodbye!");
+        System.exit(0);
+    }
 }
